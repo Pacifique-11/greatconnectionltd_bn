@@ -24,6 +24,9 @@ const supportFaqRoutes = require("./Routes/supportFAQRoutes");
 
 const searchRoutes = require("./Routes/searchRoutes");
 
+const dns = require('node:dns');
+dns.setServers(['8.8.8.8', '1.1.1.1']);
+
 dotenv.config();
 connectDB();
 const app = express();
