@@ -21,6 +21,7 @@ const transporter = nodemailer.createTransport({
 const checkUserByEmail = async (email) => {
   return await User.findOne({ email });
 };
+
 exports.sendMessageToUser = async (req, res) => {
   try {
     const recipient = await User.findById(req.params.id);
@@ -43,14 +44,12 @@ exports.sendMessageToUser = async (req, res) => {
   }
 };
 
-// Query to create a new user
+// Query to create a new user (relies on model pre-save hook for single hashing)
 const createUser = async (email, username, password, role) => {
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(password, salt);
   const newUser = new User({
     email,
     username,
-    password: hashedPassword,
+    password, // Pass plain text; Mongoose pre-save middleware hashes it automatically
     role,
     isConfirmed: false,
   });
@@ -78,10 +77,12 @@ const updateUserProfileQuery = async (userId, username, email) => {
 const deleteUserQuery = async (userId) => {
   return await User.findByIdAndDelete(userId);
 };
+
 // Query to find all users
 const getAllUsersQuery = async () => {
   return await User.find({});
 };
+
 // Query to get monthly signups using aggregation
 const getMonthlySignupsQuery = async () => {
   return await User.aggregate([
@@ -94,6 +95,7 @@ const getMonthlySignupsQuery = async () => {
     { $sort: { _id: 1 } },
   ]);
 };
+
 exports.signup = async (req, res) => {
   try {
     const { email, username, password, role = "guest" } = req.body;
@@ -113,8 +115,7 @@ exports.signup = async (req, res) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = await createUser(email, username, hashedPassword, role);
+    const newUser = await createUser(email, username, password, role);
 
     const token = jwt.sign({ userId: newUser._id }, process.env.JWT_SECRET, {
       expiresIn: "1h",
@@ -138,7 +139,6 @@ exports.signup = async (req, res) => {
       `,
     };
 
-    // Await the email send operation so it catches any timeout errors
     const info = await transporter.sendMail(mailOptions);
     console.log("Confirmation email sent:", info.response);
 
@@ -206,15 +206,21 @@ exports.updateUserProfile = async (req, res) => {
     res.status(500).json({ message: "Error updating user profile", error: error.message });
   }
 };
+
 exports.updateUserInformation = async (req, res) => {
   try {
-    const updateUser = await User.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const updateUser = await User.findById(req.params.id);
     if (!updateUser) {
       return res.status(404).json({ message: "User not found" });
     }
-    const salt = await bcrypt.genSalt(10);
-    const hashpassword = await bcrypt.hash(req.body.password, salt);
-    updateUser.password = hashpassword;
+
+    if (req.body.username) updateUser.username = req.body.username;
+    if (req.body.email) updateUser.email = req.body.email;
+
+    // Assigning raw password lets the pre-save hook hash it automatically
+    if (req.body.password) {
+      updateUser.password = req.body.password;
+    }
 
     await updateUser.save();
     res.json({ message: "User profile updated successfully", updateUser });
@@ -229,6 +235,7 @@ exports.updateUserRole = async (req, res) => {
   const { role } = req.body;
   try {
     const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
     user.role = role;
     await user.save();
     res.status(200).json({ message: 'Role updated', role: user.role });
@@ -236,10 +243,12 @@ exports.updateUserRole = async (req, res) => {
     res.status(500).json({ message: 'Failed to update role' });
   }
 };
+
 exports.toggleUserStatus = async (req, res) => {
   const userId = req.params.id;
   try {
     const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
     user.status = user.status === 'Active' ? 'Blocked' : 'Active';
     await user.save();
     res.status(200).json({ message: 'Status updated', status: user.status });
@@ -266,20 +275,30 @@ exports.login = async (req, res) => {
     const email = req.body.email?.trim().toLowerCase();
     const password = req.body.password;
 
+    console.log("---------------- LOGIN DEBUG ----------------");
+    console.log("1. Incoming Email:", email);
+    console.log("2. Incoming Password:", password);
+
     if (!email || !password) {
       return res.status(400).json({ message: "Email and password are required." });
     }
     const user = await User.findOne({ email });
 
     if (!user) {
+      console.log("3. User not found in database.");
       return res.status(401).json({ message: "Invalid credentials." });
     }
 
+    console.log("3. User found in DB. Stored Hash:", user.password);
+
     if (!user.isConfirmed) {
+      console.log("4. User is not confirmed.");
       return res.status(403).json({ message: "Please confirm your email before logging in." });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
+    console.log("5. Bcrypt match result:", isMatch);
+
     if (!isMatch) {
       return res.status(401).json({ message: "Incorrect password." });
     }
@@ -289,6 +308,7 @@ exports.login = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
+
     if (req.session) {
       req.session.user = {
         userId: user._id,
@@ -368,7 +388,6 @@ exports.logout = (req, res) => {
   }
 };
 
-// Request password reset - sends reset link to email
 exports.requestPasswordReset = async (req, res) => {
   try {
     const { email } = req.body;
@@ -410,7 +429,6 @@ exports.requestPasswordReset = async (req, res) => {
   }
 };
 
-// Reset password with token
 exports.resetPassword = async (req, res) => {
   try {
     const { token } = req.params;
@@ -428,10 +446,8 @@ exports.resetPassword = async (req, res) => {
       return res.status(404).json({ message: "Invalid or expired token." });
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const hashed = await bcrypt.hash(newPassword, salt);
-    user.password = hashed;
-
+    // Assigning raw password lets the pre-save hook hash it automatically
+    user.password = newPassword;
     await user.save();
 
     res.status(200).json({ message: "Password has been reset successfully." });
@@ -440,7 +456,6 @@ exports.resetPassword = async (req, res) => {
     res.status(500).json({ message: "Invalid or expired reset token." });
   }
 };
-
 
 exports.getSessionData = (req, res) => {
   try {
