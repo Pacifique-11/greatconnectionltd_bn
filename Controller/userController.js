@@ -4,12 +4,11 @@ const Message = require("../models/messageModal");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const nodemailer = require("nodemailer");
-const { findOne } = require("../models/requestPropertyModel");
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: process.env.SMTP_PORT,
-  secure: process.env.SMTP_SECURE === "true", // Use SSL
+  secure: process.env.SMTP_SECURE === "true",
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
@@ -97,7 +96,7 @@ const getMonthlySignupsQuery = async () => {
 };
 exports.signup = async (req, res) => {
   try {
-    const { email, username, password, role } = req.body;
+    const { email, username, password, role = "guest" } = req.body;
 
     // Validate required fields
     if (!email || !username || !password) {
@@ -105,6 +104,7 @@ exports.signup = async (req, res) => {
         message: "Email, Username and Password are required.",
       });
     }
+
     // Check if the user already exists
     const existingUser = await checkUserByEmail(email);
     if (existingUser) {
@@ -112,19 +112,23 @@ exports.signup = async (req, res) => {
         message: "User already exists with that email or Username.",
       });
     }
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = await createUser(email, username, hashedPassword, role);
+
     const token = jwt.sign({ userId: newUser._id }, process.env.JWT_SECRET, {
       expiresIn: "1h",
     });
-	const baseUrl =
-	process.env.NODE_ENV === "production"
-	  ? "https://easy-renting-bn.onrender.com"
-	  : "http://localhost:3000";
-  
-  const confirmationUrl = `${baseUrl}/api/confirm-email/${token}`;
+
+    const baseUrl =
+      process.env.NODE_ENV === "production"
+        ? process.env.BASE_URL || 'https://greatconnectionltd.onrender.com'
+        : process.env.LOCAL_URL || 'http://localhost:3000';
+
+    const confirmationUrl = `${baseUrl}/api/confirm-email/${token}`;
+
     const mailOptions = {
-      from: `"Great Connection Services" <${process.env.SMTP_USER}>`,
+      from: `"Great Connection LTD" <${process.env.SMTP_USER}>`,
       to: newUser.email,
       subject: "Email Confirmation",
       html: `
@@ -134,22 +138,22 @@ exports.signup = async (req, res) => {
       `,
     };
 
-    transporter.sendMail(mailOptions, (error, info) => {
-      if (error) {
-        console.error("Error sending confirmation email:", error);
-        return res.status(500).json({ message: "Error sending confirmation email. Please try again later." });
-      }
-      if (info.rejected.length > 0) {
-        console.error("Email rejected:", info.rejected);
-        return res.status(500).json({ message: "Email rejected. Please check the email address." });
-      }
-      console.log("Confirmation email sent:", info.response);
-      res.status(201).json({ message: "Signup successful! Please check your email to confirm your account.", user: newUser, token: token });
-      console.log("Email confirmation sent to:", newUser.email)
+    // Await the email send operation so it catches any timeout errors
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Confirmation email sent:", info.response);
+
+    return res.status(201).json({
+      message: "Signup successful! Please check your email to confirm your account.",
+      user: newUser,
+      token: token
     });
+
   } catch (error) {
-    console.error("Signup error:", error);
-    res.status(500).json({ message: "Server error occurred. Please try again later." });
+    console.error("Signup error / Email failure:", error);
+    return res.status(500).json({
+      message: "Error sending confirmation email or registering user. Please try again later.",
+      error: error.message
+    });
   }
 };
 
@@ -204,15 +208,15 @@ exports.updateUserProfile = async (req, res) => {
 };
 exports.updateUserInformation = async (req, res) => {
   try {
-    const updateUser = await User.findByIdAndUpdate(req.params.id,req.body, { new: true });
+    const updateUser = await User.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updateUser) {
       return res.status(404).json({ message: "User not found" });
     }
-   const salt = await bcrypt.genSalt(10);
-   const hashpassword = await bcrypt.hash(req.body.password, salt);
-   updateUser.password = hashpassword;
+    const salt = await bcrypt.genSalt(10);
+    const hashpassword = await bcrypt.hash(req.body.password, salt);
+    updateUser.password = hashpassword;
 
-   await updateUser.save();
+    await updateUser.save();
     res.json({ message: "User profile updated successfully", updateUser });
   } catch (error) {
     console.error("Error updating user profile:", error.message);
@@ -380,8 +384,8 @@ exports.requestPasswordReset = async (req, res) => {
 
     const baseUrl =
       process.env.NODE_ENV === "production"
-        ? "https://easy-renting-bn.onrender.com"
-        : "http://localhost:3000";
+        ? process.env.BASE_URL || "https://greatconnectionltd.onrender.com"
+        : process.env.LOCAL_URL || "http://localhost:3000";
 
     const resetUrl = `${baseUrl}/reset-password/${resetToken}`;
 
