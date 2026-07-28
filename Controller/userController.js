@@ -139,9 +139,12 @@ exports.signup = async (req, res) => {
       `,
     };
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log("Confirmation email sent:", info.response);
+    // FIX: Send email asynchronously in the background so it doesn't block the frontend response
+    transporter.sendMail(mailOptions)
+      .then(info => console.log("Confirmation email sent:", info.response))
+      .catch(mailErr => console.error("Background email sending error:", mailErr.message));
 
+    // Immediately respond to the client
     return res.status(201).json({
       message: "Signup successful! Please check your email to confirm your account.",
       user: newUser,
@@ -149,9 +152,9 @@ exports.signup = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Signup error / Email failure:", error);
+    console.error("Signup error / Registration failure:", error);
     return res.status(500).json({
-      message: "Error sending confirmation email or registering user. Please try again later.",
+      message: "Error registering user. Please try again later.",
       error: error.message
     });
   }
