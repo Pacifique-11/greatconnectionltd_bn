@@ -38,9 +38,15 @@ app.use(compression());
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: false }));
 const allowedOrigins = [
-	"http://localhost:5173",
-	"https://paccy-easy-renting-fn.netlify.app"
-  ];
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://phenomenal-crisp-0a6005.netlify.app",
+  "https://paccy-easy-renting-fn.netlify.app",
+  "https://www.greatconnectionltd.com",
+  "https://greatconnectionltd.com",
+  "https://great-connection.onrender.com",
+  "https://greatconnectionltd.onrender.com",
+];
   
   app.use(
 	cors({
